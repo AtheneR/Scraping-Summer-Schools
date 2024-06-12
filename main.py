@@ -1,9 +1,10 @@
-# ce code a pour vue de faire une liste des formations d'été disponibles dans le domaine de l'informatique indiquées sur le site internet summerschoolsineurope, les données sont récupérées en anglais puis traduites en français
+# ce code a pour vue de faire une liste des formations d'été disponibles dans le domaine de l'intelligence artificielle indiquées sur le site internet summerschoolsineurope, les données sont récupérées en anglais puis traduites en français
 import re
 import requests
 from bs4 import BeautifulSoup
 import csv
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from datetime import datetime
 
     # on enlève les points-virgule des chaînes de caractères récupérées car c'est le symbole qu'on a choisi pour indiquer les changements de colonne
 def nettoyage(texte):
@@ -54,6 +55,17 @@ def convertir_prix_en_euros(prix):
     else:
         return None
 
+    # on calcule un décart en jours entre deux dates données en anglais
+def calculer_duree(debut, fin):
+    try:
+        date_debut = datetime.strptime(debut, '%d %B %Y')
+        date_fin = datetime.strptime(fin, '%d %B %Y')
+        duree = (date_fin - date_debut).days
+        return duree
+    except ValueError:
+        return 'Erreur : durée invalide.'
+
+
     # on crée une instance AutoTokenizer à partir du modèle opus-mt-en-fr pré-entraîné à la traduction automatique anglais-français 
 tokenizer = AutoTokenizer.from_pretrained("Helsinki-NLP/opus-mt-en-fr")
     # on crée une instance seq2seq un modèle de séquençage à partir du modèle opus-mt-en-fr
@@ -65,15 +77,15 @@ def traduire_texte(texte):
     outputs = model.generate(**inputs, max_length=150, num_beams=4, early_stopping=True)
     return tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
 
-    # on choisit l'url de la page du site summerschoolineurope spécialisée pour l'informatique (computer science)
-url = "https://www.summerschoolsineurope.eu/search/discipline;ComSc"
+    # on choisit l'url de la page du site summerschoolineurope spécialisée pour l'intelligence artificielle
+url = "https://www.summerschoolsineurope.eu/search/discipline;ArtInt"
     # on simule l'utilisation par un utilisateur lambda pour éviter d'être écarté par le site avec une erreur 403
 identifiant = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
 }
 
     # on entre le nom du fichier dans lequel on voudra stocker les informations
-nom_fichier = 'test_summer_schools_12.csv'
+nom_fichier = 'liste_summer_schools_ia.csv'
 
     # on récupère et analyse les informations voulues sur cette page 
 reponse = requests.get(url, headers=identifiant)
@@ -85,7 +97,7 @@ if reponse.status_code == 200:
     with open(nom_fichier, mode='w', newline='', encoding='utf-8') as fichier:
         writer = csv.writer(fichier, delimiter=';')
             # on détermine les colonnes que l'on veut dans le fichier csv
-        writer.writerow(['Titre', 'Pays', 'Ville', 'Période', 'Langue', 'Nombre de crédits', 'Coût'])
+        writer.writerow(['Titre', 'Pays', 'Ville', 'Début', 'Fin', 'Durée (en jours)', 'Langue', 'Nombre de crédits', 'Coût (en euros)'])
 
             # on lance la récupération des informations de chaque formation
         for formation in liste_formations:
@@ -111,8 +123,17 @@ if reponse.status_code == 200:
                 liste_details = details_formation.find_all('div', class_='detailset')
 
                     # on récupère la période de la formation
+                
                 periode_anglais = nettoyage(liste_details[1].find('span', class_='detail').text) if len(liste_details) > 1 else 'Non-indiqué'
-                periode_francais = traduire_texte(periode_anglais)
+                dates = periode_anglais.split(' - ')
+
+                    # on récupère les dates de début et de fin
+                debut = traduire_texte(dates[0]) if len(dates) > 1 else 'Non-indiqué'
+                fin = traduire_texte(dates[1]) if len(dates) > 1 else 'Non-indiqué'
+                
+                    # on récupère la durée en jours
+                duree = calculer_duree(dates[0], dates[1]) if len(dates) > 1 else 'Non-indiqué'
+
                     # ce code est écrit en 2024, on choisit de garder seulement les formations qui se passent en 2024 ou 2025, sinon, on n'écrit rien dans le fichier
                 if "2024" not in periode_anglais and "2025" not in periode_anglais:
                     continue
@@ -148,14 +169,16 @@ if reponse.status_code == 200:
                 cout_eur = convertir_prix_en_euros(cout)
 
             else:
-                periode_francais = 'Non-indiqué'
+                debut = 'Non-indiqué'
+                fin = 'Non-indiqué'
+                duree = 'Non-indiqué'
                 langue_francais = 'Non-indiqué'
                 credits = 'Non-indiqué'
                 cout = 'Non-indiqué'
                 cout_eur = 'Non-indiqué'
 
                 # on écrit la ligne que l'on vient de regarder dans le fichier csv aux bonnes colonnes
-            writer.writerow([f"{titre_francais} ({titre_anglais})", pays_francais, ville_francais, periode_francais, langue_francais, credits, cout_eur])
+            writer.writerow([f"{titre_francais} ({titre_anglais})", pays_francais, ville_francais, debut, fin, duree, langue_francais, credits, cout_eur])
     
         # on renvoie un message de réussite si tout cela a pu s'effectuer sans accroc
     print(f"Les données ont été enregistrées dans le fichier : {nom_fichier}")
