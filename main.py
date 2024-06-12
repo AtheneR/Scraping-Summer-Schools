@@ -65,6 +65,10 @@ def calculer_duree(debut, fin):
     except ValueError:
         return 'Erreur : durée invalide.'
 
+    # on passe les dates de la forme "jour mois année" à "JJ/MM/AAAA"
+def convertir_date(date_str):
+    date_obj = datetime.strptime(date_str, '%d %B %Y')
+    return date_obj.strftime('%d/%m/%Y')
 
     # on crée une instance AutoTokenizer à partir du modèle opus-mt-en-fr pré-entraîné à la traduction automatique anglais-français 
 tokenizer = AutoTokenizer.from_pretrained("Helsinki-NLP/opus-mt-en-fr")
@@ -85,19 +89,19 @@ identifiant = {
 }
 
     # on entre le nom du fichier dans lequel on voudra stocker les informations
-nom_fichier = 'liste_summer_schools_ia.csv'
+nom_fichier = 'liste_summer_schools_ia_10.csv'
 
     # on récupère et analyse les informations voulues sur cette page 
 reponse = requests.get(url, headers=identifiant)
 if reponse.status_code == 200:
     soup = BeautifulSoup(reponse.content, 'html.parser')
         # on a identifié la partie générale qui prend chaque carte de chaque formation, on les sélectionne pour les regarder une par une
-    liste_formations = soup.find_all('div', class_='card course article-feed masonry')
+    liste_formations = soup.find_all('div', class_=['card course article-feed masonry', 'card course article-feed masonry premium'])
 
     with open(nom_fichier, mode='w', newline='', encoding='utf-8') as fichier:
         writer = csv.writer(fichier, delimiter=';')
             # on détermine les colonnes que l'on veut dans le fichier csv
-        writer.writerow(['Titre', 'Pays', 'Ville', 'Début', 'Fin', 'Durée (en jours)', 'Langue', 'Nombre de crédits', 'Coût (en euros)'])
+        writer.writerow(['Titre', 'Pays', 'Ville', 'Institut', 'Début', 'Fin', 'Durée (en jours)', 'Langue', 'Nombre de crédits', 'Coût (en euros)'])
 
             # on lance la récupération des informations de chaque formation
         for formation in liste_formations:
@@ -110,33 +114,60 @@ if reponse.status_code == 200:
             lieu_brut = formation.find('div', class_='location')
             lieu_anglais = lieu_brut.text if lieu_brut else 'Non-indiqué'
             pays_ville = lieu_anglais.split(', ', 1)
+
             if len(pays_ville) == 2:
                 ville, pays = pays_ville
             else:
                 ville = pays_ville[0]
                 pays = 'Non-indiqué'
-            ville_francais = traduire_texte(ville)
-            pays_francais = traduire_texte(pays)
+            ville = ville.replace('\n', '')
+            pays = pays.replace('\n', '')
+            print(ville, pays)
+    
+                # on a remarqué des erreurs de traduction par le modèle pour ces lieux
+            if pays == 'Netherlands':
+                pays_francais = 'Pays-bas'
+            else:
+                pays_francais = traduire_texte(pays)
+            
+            if ville in ['Aachen', 'Birmingham', 'Amsterdam', 'Utrecht', 'Leeuwarden']:
+                ville_francais = ville
+                if ville in ['Amsterdam', 'Utrecht', 'Leeuwarden']:
+                    pays_francais = 'Pays-Bas'
+            else:
+                ville_francais = traduire_texte(ville)
+
 
             details_formation = formation.find('div', class_='course-details')
             if details_formation:
                 liste_details = details_formation.find_all('div', class_='detailset')
 
+                    # on récupère l'institut
+                institut = nettoyage(liste_details[0].find('span', class_='detail').text)
+                if any(char.isdigit() for char in institut):
+                    institut_francais = 'Non-indiqué'
+                else:
+                    institut_francais = traduire_texte(institut)
+
                     # on récupère la période de la formation
-                
                 periode_anglais = nettoyage(liste_details[1].find('span', class_='detail').text) if len(liste_details) > 1 else 'Non-indiqué'
                 dates = periode_anglais.split(' - ')
 
-                    # on récupère les dates de début et de fin
-                debut = traduire_texte(dates[0]) if len(dates) > 1 else 'Non-indiqué'
-                fin = traduire_texte(dates[1]) if len(dates) > 1 else 'Non-indiqué'
-                
-                    # on récupère la durée en jours
-                duree = calculer_duree(dates[0], dates[1]) if len(dates) > 1 else 'Non-indiqué'
+                if len(dates) == 2:
+                        # on récupère les dates de début et de fin
+                    debut = convertir_date(dates[0])
+                    fin = traduire_texte(dates[1]) if len(dates) > 1 else 'Non-indiqué'
+                        # on récupère la durée en jours
+                    duree = calculer_duree(dates[0], dates[1]) if len(dates) > 1 else 'Non-indiqué'
 
-                    # ce code est écrit en 2024, on choisit de garder seulement les formations qui se passent en 2024 ou 2025, sinon, on n'écrit rien dans le fichier
-                if "2024" not in periode_anglais and "2025" not in periode_anglais:
-                    continue
+                        # on choisit de ne prendre que les formations qui n'ont pas encore commencé
+                    try:
+                        date_actuelle = datetime.now()
+                        date_debut = datetime.strptime(dates[0], '%d %B %Y')
+                        if date_debut <= date_actuelle:
+                            continue
+                    except ValueError:
+                        continue
 
                     # on récupère la langue de la formation
                 langues_autorisees = ["Anglais", "Italien", "Français", "Espagnol", "Albanais", "Estonien", "Allemand", "Esperanto"]
@@ -146,7 +177,6 @@ if reponse.status_code == 200:
                     langue_francais = "Anglais"
                 else :
                     langue_francais = traduire_texte(langue_anglais)
-                    print(langue_francais)
                         # on a remarqué qu'il y a trop de risque de mal traduction pour les langues, donc dans le cas où la langue donnée ne correspond à aucune relevée comme étant valide en se basant sur les langues trouvées sur le site précédemment, on indiquera 'Non-indiqué' par sécurité, mais également dans le cas où cette information n'ait pas été entré, ce qui casserait la structure repérée d'une fiche d'information sur une formation
                     if langue_francais not in langues_autorisees :
                         langue_francais = 'Non-indiqué'
@@ -167,8 +197,11 @@ if reponse.status_code == 200:
 
                     # on récupère le coût de la formation  
                 cout_eur = convertir_prix_en_euros(cout)
+                if not cout:
+                    cout_eur = 'Non-indiqué'
 
             else:
+                institut_francais = 'Non-indiqué'
                 debut = 'Non-indiqué'
                 fin = 'Non-indiqué'
                 duree = 'Non-indiqué'
@@ -178,7 +211,7 @@ if reponse.status_code == 200:
                 cout_eur = 'Non-indiqué'
 
                 # on écrit la ligne que l'on vient de regarder dans le fichier csv aux bonnes colonnes
-            writer.writerow([f"{titre_francais} ({titre_anglais})", pays_francais, ville_francais, debut, fin, duree, langue_francais, credits, cout_eur])
+            writer.writerow([f"{titre_francais} ({titre_anglais})", pays_francais, ville_francais, institut_francais, debut, fin, duree, langue_francais, credits, cout_eur])
     
         # on renvoie un message de réussite si tout cela a pu s'effectuer sans accroc
     print(f"Les données ont été enregistrées dans le fichier : {nom_fichier}")
